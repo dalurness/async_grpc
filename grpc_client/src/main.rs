@@ -3,10 +3,6 @@ use hello_world::greeter_client::GreeterClient;
 use hello_world::HelloRequest;
 use tokio::task;
 use tonic::Request;
-
-
-use futures::future::join_all;
-
 pub mod hello_world {
     tonic::include_proto!("helloworld");
 }
@@ -15,43 +11,46 @@ pub mod hello_world {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     let mut v= vec![];
-    let (tx, mut rx) = mpsc::channel(32);
-
-
+    let (tx, mut rx): (mpsc::Sender<Request<HelloRequest>>, mpsc::Receiver<Request<HelloRequest>>) = mpsc::channel(6);
 
     let manager = tokio::spawn(async move {
         // Establish a connection to the server
         let mut client = GreeterClient::connect("http://[::1]:50051").await.unwrap();
     
         // Start receiving messages
-        while let Some(next) = rx.recv().await {
-            match next {
-                Ok(option) => {
-                    match option {
-                        Some(m) => {
-                            let response = client.say_hello(m).await.unwrap();
-                            println!("RESPONSE={:?}", response);
-                        },
-                        None => {}
-                    }
-                }
-                Err(e) => println!("{:?}", e)
+
+        println!("Starting manager...");
+        loop {
+            let val = rx.recv().await;
+            match val {
+                Some(message) => {
+                    println!("Sending...");
+                    let _response = client.say_hello(message).await.unwrap();
+                },
+                None => {
+                    println!(" ITS OVER ");
+                    break;
+                },
             }
+            //println!("RESPONSE={:?}", response);
+
         }
     });
-
-
-
 
     for i in 0..100 {
         let tx = tx.clone();
         v.push(task::spawn(async move {
-            send_message(i, tx);
+            send_message(i, tx).await;
         }));
     }
-    let results = join_all(v);
-    
+    for process in v {
+        process.await.unwrap();
+        println!("Done Waiting");
+    }
 
+    manager.await.unwrap();
+
+    //manager
     Ok(())
 }
 
@@ -60,6 +59,6 @@ async fn send_message(n: usize, s: mpsc::Sender<Request<HelloRequest>>) {
     let request = tonic::Request::new(HelloRequest {
         name: to_send,
     });
-
-    s.send(request).await;    
+    s.send(request).await.unwrap();
+    println!("Created new message");
 }
